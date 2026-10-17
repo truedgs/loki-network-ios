@@ -56,3 +56,13 @@ backend/node_modules/
 backend/tmp/
 backend/data/
 backend/.env
+
+# iOS upload workspace: never snapshot local secrets or build artifacts.
+.env
+.env.*
+*.p12
+*.p8
+*.mobileprovision
+backend-defines.json
+dist/
+DerivedData/

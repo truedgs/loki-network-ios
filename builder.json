@@ -1,0 +1,26 @@
+{
+  "project": "LOKI Network",
+  "platform": "ios",
+  "github": {
+    "owner": "truedgs",
+    "repo": "loki-network-ios"
+  },
+  "provider": "github",
+  "codemagic": {},
+  "bitrise": {},
+  "ios": {
+    "path": "ios",
+    "scheme": "Runner",
+    "bundleId": "com.lokinetwork.v2rayVpn",
+    "extensions": ["com.lokinetwork.v2rayVpn.XrayTunnel"],
+    "configuration": "Release",
+    "signing": false
+  },
+  "flutter": {
+    "version": "3.44.9",
+    "watch": {}
+  },
+  "reactNative": {},
+  "kmp": {},
+  "mobai": {}
+}
