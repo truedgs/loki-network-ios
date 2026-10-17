@@ -1,0 +1,21 @@
+name: flutter_vless_android
+description: No-op Android implementation used by LOKI Network because Android uses flutter_v2ray.
+version: 1.1.6
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_vless_platform_interface: ^1.1.2
+
+flutter:
+  plugin:
+    implements: flutter_vless_platform_interface
+    platforms:
+      android:
+        package: com.github.tfox.flutter_vless
+        pluginClass: FlutterVlessPlugin
