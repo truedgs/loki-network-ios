@@ -124,6 +124,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final vpn = context.watch<VpnProvider>();
     final selectedServer = serverProvider.selectedServer;
     final isAndroid = defaultTargetPlatform == TargetPlatform.android;
+    final compactMobileHeader =
+        isAndroid || defaultTargetPlatform == TargetPlatform.iOS;
     final brandTitle = Text(
       'LOKI Network',
       style: Theme.of(context).textTheme.titleMedium,
@@ -147,7 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(width: 12),
-        if (isAndroid)
+        if (compactMobileHeader)
           Flexible(
             child: FittedBox(
               fit: BoxFit.scaleDown,
@@ -175,14 +177,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    if (isAndroid) ...[
+                    if (compactMobileHeader) ...[
                       Expanded(child: brand),
                       const SizedBox(width: 8),
                     ] else
                       brand,
                     Row(
                       children: [
-                        if (isAndroid && !auth.isPremium)
+                        if (compactMobileHeader &&
+                            !auth.isPremium &&
+                            auth.isAccountVerified)
                           ElevatedButton(
                             onPressed: () => _buyPremium(auth.hwid),
                             style: ElevatedButton.styleFrom(
@@ -253,13 +257,42 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
 
             // Main content
+            if (isAndroid &&
+                (auth.error.isNotEmpty || serverProvider.error.isNotEmpty))
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          auth.error.isNotEmpty
+                              ? auth.error
+                              : serverProvider.error,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Retry account and servers',
+                        onPressed: auth.isLoading || serverProvider.isLoading
+                            ? null
+                            : () async {
+                                await auth.refreshPremium();
+                                await serverProvider.fetchServers();
+                              },
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             SliverFillRemaining(
               hasScrollBody: false,
               child: Column(
                 children: [
                   const Spacer(flex: 2),
 
-                  if (!isAndroid && !auth.isPremium) ...[
+                  if (!compactMobileHeader && !auth.isPremium) ...[
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 28),
                       child: ElevatedButton.icon(

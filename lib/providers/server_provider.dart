@@ -5,10 +5,14 @@ import '../services/server_service.dart';
 
 /// Provider for server list management
 class ServerProvider extends ChangeNotifier {
+  ServerProvider({ServerService? serverService})
+    : _serverService = serverService ?? ServerService();
+
   static const _favoriteServerIdsKey = 'favorite_server_ids';
   static const _selectedServerIdKey = 'selected_server_id';
 
-  final _serverService = ServerService();
+  final ServerService _serverService;
+  Future<void>? _pendingFetch;
 
   List<ServerModel> _servers = [];
   ServerModel? _selectedServer;
@@ -37,12 +41,25 @@ class ServerProvider extends ChangeNotifier {
 
   /// Fetch servers from backend
   Future<void> fetchServers() async {
-    await _loadFavorites();
+    if (!_serverService.usesReliableRequests) return _fetchServers();
+    final pending = _pendingFetch;
+    if (pending != null) return pending;
+    final operation = _fetchServers();
+    _pendingFetch = operation;
+    try {
+      await operation;
+    } finally {
+      _pendingFetch = null;
+    }
+  }
+
+  Future<void> _fetchServers() async {
     _isLoading = true;
     _error = '';
     notifyListeners();
 
     try {
+      await _loadFavorites();
       final response = await _serverService.fetchServers();
       _servers = response.servers;
       _updatedAt = response.updatedAt;

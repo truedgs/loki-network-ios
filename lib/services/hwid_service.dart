@@ -32,9 +32,13 @@ class PremiumStatus {
 
 /// Service for HWID generation and premium status checking
 class HwidService {
+  HwidService({ApiSessionService? apiSession})
+    : _apiSession = apiSession ?? ApiSessionService.instance;
+
   static const _channel = MethodChannel('com.lokinetwork.mm/hwid');
   static const _fallbackHwidKey = 'fallback_hwid';
-  final _apiSession = ApiSessionService.instance;
+  final ApiSessionService _apiSession;
+  bool get usesReliableRequests => _apiSession.usesReliableRequests;
 
   /// Gets the device HWID via platform channel (Android ID formatted as XXXX-XXXX-XXXX-XXXX)
   Future<String> getHwid() async {
@@ -45,6 +49,12 @@ class HwidService {
     } catch (e) {
       // MissingPluginException can happen outside Android or before the
       // platform channel is available, so keep a stable non-zero fallback.
+    }
+    if (usesReliableRequests) {
+      // A temporary native-channel failure must not create a different account.
+      throw const ApiSessionException(
+        'Unable to read device ID. Please retry.',
+      );
     }
     return _getFallbackHwid();
   }
@@ -59,22 +69,35 @@ class HwidService {
   Future<PremiumStatus> getPremiumStatus() async {
     try {
       final hwid = await getHwid();
-      final response = await http.post(
-        ApiConfig.uri('/api/v1/auth/status'),
-        headers: await _apiSession.authorizedJsonHeaders(hwid),
-        body: jsonEncode({'hwid': hwid}),
-      );
+      final response = usesReliableRequests
+          ? (await _apiSession.postRead(hwid, '/api/v1/auth/status', {
+              'hwid': hwid,
+            })).response
+          : await http.post(
+              ApiConfig.uri('/api/v1/auth/status'),
+              headers: await _apiSession.authorizedJsonHeaders(hwid),
+              body: jsonEncode({'hwid': hwid}),
+            );
       if (response.statusCode != 200) {
+        if (usesReliableRequests) {
+          throw const ApiSessionException(
+            'Unable to verify account status. Please retry.',
+          );
+        }
         return const PremiumStatus(isPremium: false);
       }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (usesReliableRequests && data['premium'] is! bool) {
+        throw const ApiSessionException('Invalid account status response');
+      }
       return PremiumStatus(
         isPremium: data['premium'] as bool? ?? false,
         expiresAt: _parseExpiryDate(data['expiresAt'] as String? ?? ''),
         isExpired: data['expired'] as bool? ?? false,
       );
     } catch (e) {
+      if (usesReliableRequests) rethrow;
       return const PremiumStatus(isPremium: false);
     }
   }

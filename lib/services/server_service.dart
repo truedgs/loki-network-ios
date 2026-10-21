@@ -8,14 +8,36 @@ import 'hwid_service.dart';
 
 /// Service for fetching and managing VPN server configurations
 class ServerService {
-  final _hwidService = HwidService();
-  final _apiSession = ApiSessionService.instance;
+  ServerService({ApiSessionService? apiSession, HwidService? hwidService})
+    : _apiSession = apiSession ?? ApiSessionService.instance,
+      _hwidService = hwidService ?? HwidService(apiSession: apiSession);
+
+  final HwidService _hwidService;
+  final ApiSessionService _apiSession;
+  bool get usesReliableRequests => _apiSession.usesReliableRequests;
   final _crypto = ConfigCryptoService();
 
   /// Fetches the full server list from the backend
   Future<ServerListResponse> fetchServers() async {
     try {
       final hwid = await _hwidService.getHwid();
+      if (_apiSession.usesReliableRequests) {
+        final result = await _apiSession.postRead(hwid, '/api/v1/servers', {
+          'hwid': hwid,
+        });
+        if (result.response.statusCode != 200) {
+          throw const ServerServiceException(
+            'Unable to load servers. Please retry.',
+          );
+        }
+        final json = jsonDecode(result.response.body) as Map<String, dynamic>;
+        if (json['servers'] is! List) {
+          throw const ServerServiceException(
+            'Invalid server list response. Please retry.',
+          );
+        }
+        return await _parseEncryptedResponse(json, result.configKey);
+      }
       final response = await http.post(
         ApiConfig.uri('/api/v1/servers'),
         headers: await _apiSession.authorizedJsonHeaders(hwid),

@@ -1,5 +1,8 @@
 class ApiConfig {
-  static const appVersion = '2.0.0';
+  static const appVersion = String.fromEnvironment(
+    'VPN_APP_VERSION',
+    defaultValue: '2.0.0',
+  );
 
   static const baseUrl = String.fromEnvironment(
     'VPN_API_BASE_URL',

@@ -40,9 +40,9 @@ class _SplashScreenState extends State<SplashScreen> {
 
     // Navigate to home
     if (mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
     }
   }
 
@@ -54,11 +54,7 @@ class _SplashScreenState extends State<SplashScreen> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF0D1117),
-              Color(0xFF161B22),
-              Color(0xFF1C2128),
-            ],
+            colors: [Color(0xFF0D1117), Color(0xFF161B22), Color(0xFF1C2128)],
           ),
         ),
         child: Center(
@@ -71,10 +67,7 @@ class _SplashScreenState extends State<SplashScreen> {
                 height: 120,
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
-                    colors: [
-                      Color(0xFF6C5CE7),
-                      Color(0xFFA29BFE),
-                    ],
+                    colors: [Color(0xFF6C5CE7), Color(0xFFA29BFE)],
                   ),
                   borderRadius: BorderRadius.circular(30),
                   boxShadow: [
@@ -95,15 +88,15 @@ class _SplashScreenState extends State<SplashScreen> {
               Text(
                 'LOKI Network',
                 style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 8),
               Text(
                 'Secure • Fast • Reliable',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: const Color(0xFF8B95A5),
-                    ),
+                  color: const Color(0xFF8B95A5),
+                ),
               ),
               const SizedBox(height: 48),
               const SizedBox(
@@ -120,9 +113,13 @@ class _SplashScreenState extends State<SplashScreen> {
                   return Text(
                     auth.isLoading
                         ? 'Checking HWID...'
+                        : Theme.of(context).platform ==
+                                  TargetPlatform.android &&
+                              !auth.isAccountVerified
+                        ? 'Account verification unavailable'
                         : auth.isPremium
-                            ? 'Premium account verified'
-                            : 'Free account',
+                        ? 'Premium account verified'
+                        : 'Free account',
                     style: Theme.of(context).textTheme.bodySmall,
                   );
                 },

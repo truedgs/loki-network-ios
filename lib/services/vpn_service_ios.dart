@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_vless/flutter_vless.dart';
 
 import 'vpn_types.dart';
@@ -10,6 +11,8 @@ import 'vpn_types.dart';
 /// Full tunnel mode requires the native XrayTunnel Network Extension target,
 /// App Groups, and signing to be configured in Xcode on macOS.
 class IosVpnService implements VpnRuntimeService {
+  IosVpnService({this._connectTimeout = const Duration(seconds: 45)});
+
   final _controller = StreamController<VpnStatusData>.broadcast();
   @override
   Stream<VpnStatusData> get statusStream => _controller.stream;
@@ -17,16 +20,27 @@ class IosVpnService implements VpnRuntimeService {
   static const _bundleId = 'com.lokinetwork.v2rayVpn';
   static const _appGroupId = 'group.com.lokinetwork.v2rayVpn';
   static const int _localSocksPort = 10808;
-  static const Duration _connectTimeout = Duration(seconds: 45);
+  static const _setupChannel = MethodChannel(
+    'com.lokinetwork.mm/ios_vpn_setup',
+  );
+  final Duration _connectTimeout;
 
   FlutterVless? _vless;
   bool _initialized = false;
+  Future<void>? _initializing;
+  Completer<void>? _ready;
+  bool _disposed = false;
+  bool _suppressStatus = false;
+  bool _sawConnecting = false;
+  bool _connectInFlight = false;
+  int _generation = 0;
   VpnStatusData _current = VpnStatusData(status: VpnStatus.disconnected);
 
   @override
   VpnStatusData get current => _current;
 
   void _emit(VpnStatusData data) {
+    if (_disposed) return;
     _current = data;
     _controller.add(data);
   }
@@ -34,10 +48,24 @@ class IosVpnService implements VpnRuntimeService {
   @override
   Future<void> initialize() async {
     if (_initialized) return;
+    final pending = _initializing;
+    if (pending != null) return pending;
+    final operation = _initialize();
+    _initializing = operation;
+    try {
+      await operation;
+    } finally {
+      _initializing = null;
+    }
+  }
+
+  Future<void> _initialize() async {
     _vless = FlutterVless(
       onStatusChanged: (status) {
+        if (_disposed || _suppressStatus) return;
         switch (status.connectionState) {
           case VlessConnectionState.connected:
+            if (_ready != null && !_ready!.isCompleted) _ready!.complete();
             _emit(
               VpnStatusData(
                 status: VpnStatus.connected,
@@ -51,6 +79,7 @@ class IosVpnService implements VpnRuntimeService {
             );
             break;
           case VlessConnectionState.connecting:
+            _sawConnecting = true;
             _emit(
               VpnStatusData(
                 status: VpnStatus.connecting,
@@ -68,6 +97,16 @@ class IosVpnService implements VpnRuntimeService {
             break;
           case VlessConnectionState.disconnected:
           case VlessConnectionState.unknown:
+            if (_ready != null && !_ready!.isCompleted) {
+              if (_sawConnecting) {
+                _ready!.completeError(
+                  StateError(
+                    'The iOS VPN extension stopped before the tunnel became ready.',
+                  ),
+                );
+              }
+              return;
+            }
             _emit(
               VpnStatusData(
                 status: VpnStatus.disconnected,
@@ -90,7 +129,19 @@ class IosVpnService implements VpnRuntimeService {
   @override
   Future<bool> requestPermission() async {
     if (!_initialized) await initialize();
-    return await _vless!.requestPermission();
+    final setup = await _setupChannel
+        .invokeMapMethod<String, dynamic>('checkVpnSetup')
+        .timeout(_connectTimeout);
+    if (setup?['bundleId'] != _bundleId ||
+        setup?['groupIdentifier'] != _appGroupId ||
+        setup?['keychainAccessGroup'] != _appGroupId) {
+      throw PlatformException(
+        code: 'IOS_VPN_CONFIGURATION',
+        message:
+            'App and VPN extension identifiers do not match this build. Rebuild and sign both targets together.',
+      );
+    }
+    return await _vless!.requestPermission().timeout(_connectTimeout);
   }
 
   @override
@@ -121,42 +172,74 @@ class IosVpnService implements VpnRuntimeService {
     String link, {
     VpnConnectionMode mode = VpnConnectionMode.tunnel,
   }) async {
-    if (!_initialized) await initialize();
+    if (_connectInFlight || _disposed) return;
+    _connectInFlight = true;
+    final generation = ++_generation;
+    var startAttempted = false;
+    _suppressStatus = true;
     _emit(
       VpnStatusData(status: VpnStatus.connecting, message: 'Connecting...'),
     );
 
     try {
+      if (!_initialized) await initialize();
       final parser = FlutterVless.parseFromURL(link);
       final config = _buildIosVpnConfiguration(parser.getFullConfiguration());
-
-      {
-        final hasPermission = await _vless!.requestPermission().timeout(
-          _connectTimeout,
-          onTimeout: () => false,
+      final hasPermission = await requestPermission();
+      if (generation != _generation || _disposed) return;
+      if (!hasPermission) {
+        throw PlatformException(
+          code: 'IOS_VPN_PERMISSION',
+          message:
+              'iOS did not allow saving the VPN profile. Allow the system VPN prompt. If no prompt appears, check Network Extension provisioning, Screen Time or device-management restrictions.',
         );
-        if (!hasPermission) {
-          _emit(
-            VpnStatusData(
-              status: VpnStatus.error,
-              message:
-                  'iOS VPN permission denied. Check signing, App Group, and XrayTunnel setup.',
-            ),
-          );
-          return;
+      }
+      _sawConnecting = false;
+      _suppressStatus = false;
+      final ready = Completer<void>();
+      _ready = ready;
+      // Observe immediately: native status can arrive before startVless returns.
+      unawaited(ready.future.catchError((Object _) {}));
+      startAttempted = true;
+      await Future.wait<void>([
+        _vless!.startVless(
+          remark: parser.remark,
+          config: config,
+          proxyOnly: false,
+        ),
+        ready.future,
+      ], eagerError: true).timeout(_connectTimeout);
+    } catch (e) {
+      if (generation != _generation || _disposed) return;
+      _suppressStatus = true;
+      var cleanupFailed = false;
+      if (startAttempted) {
+        try {
+          await _vless!.stopVless().timeout(const Duration(seconds: 10));
+        } catch (_) {
+          cleanupFailed = true;
         }
       }
-
-      await _vless!
-          .startVless(remark: parser.remark, config: config, proxyOnly: false)
-          .timeout(_connectTimeout);
-    } catch (e) {
+      if (generation != _generation || _disposed) return;
+      final message = e is TimeoutException
+          ? (startAttempted
+                ? 'iOS VPN did not become ready before the timeout.'
+                : 'Timed out waiting for the iOS VPN setup or permission prompt. Unlock the phone and retry.')
+          : e is PlatformException
+          ? '${e.code}: ${e.message ?? 'iOS VPN setup failed.'}'
+          : 'Connection failed: $e';
       _emit(
         VpnStatusData(
           status: VpnStatus.error,
-          message: 'Connection failed: $e',
+          message:
+              '$message${cleanupFailed ? ' Stop the VPN in iOS Settings before retrying; automatic cleanup failed.' : ''}',
         ),
       );
+    } finally {
+      if (generation == _generation) {
+        _connectInFlight = false;
+        _ready = null;
+      }
     }
   }
 
@@ -189,7 +272,13 @@ class IosVpnService implements VpnRuntimeService {
 
   @override
   Future<void> disconnect() async {
-    if (!_initialized) await initialize();
+    ++_generation;
+    _connectInFlight = false;
+    _suppressStatus = true;
+    if (_ready != null && !_ready!.isCompleted) {
+      _ready!.completeError(StateError('Connection canceled.'));
+    }
+    _ready = null;
     _emit(
       VpnStatusData(
         status: VpnStatus.disconnecting,
@@ -197,7 +286,12 @@ class IosVpnService implements VpnRuntimeService {
       ),
     );
     try {
-      await _vless!.stopVless();
+      if (_vless != null) {
+        await _vless!.stopVless().timeout(const Duration(seconds: 10));
+      }
+      _emit(
+        VpnStatusData(status: VpnStatus.disconnected, message: 'Disconnected'),
+      );
     } catch (e) {
       _emit(
         VpnStatusData(
@@ -210,6 +304,11 @@ class IosVpnService implements VpnRuntimeService {
 
   @override
   void dispose() {
+    _disposed = true;
+    ++_generation;
+    if (_ready != null && !_ready!.isCompleted) {
+      _ready!.completeError(StateError('Service disposed.'));
+    }
     _controller.close();
   }
 

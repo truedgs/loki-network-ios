@@ -17,6 +17,9 @@ class SettingsScreen extends StatelessWidget {
     final auth = context.watch<AuthProvider>();
     final serverProvider = context.watch<ServerProvider>();
     final vpnProvider = context.watch<VpnProvider>();
+    final isAndroid =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    final accountUnavailable = isAndroid && !auth.isAccountVerified;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -49,7 +52,9 @@ class SettingsScreen extends StatelessWidget {
             context,
             icon: auth.isPremium ? Icons.star : Icons.star_border,
             title: 'Account Type',
-            value: auth.isPremium
+            value: accountUnavailable
+                ? (auth.isLoading ? 'Checking...' : 'Unable to verify')
+                : auth.isPremium
                 ? 'Premium'
                 : auth.isPremiumExpired
                 ? 'Premium Expired'
@@ -63,12 +68,12 @@ class SettingsScreen extends StatelessWidget {
             context,
             icon: Icons.event_available_outlined,
             title: 'Premium Expiry',
-            value: auth.premiumExpiryLabel,
+            value: accountUnavailable ? 'Unknown' : auth.premiumExpiryLabel,
             iconColor: auth.isPremiumExpired
                 ? const Color(0xFFFF6B6B)
                 : const Color(0xFF6C5CE7),
           ),
-          if (!auth.isPremium) ...[
+          if (!auth.isPremium && !accountUnavailable) ...[
             const SizedBox(height: 8),
             _infoCard(
               context,
@@ -143,25 +148,34 @@ class SettingsScreen extends StatelessWidget {
 
           // Refresh button
           ElevatedButton.icon(
-            onPressed: () async {
-              final vpnProvider = context.read<VpnProvider>();
-              await auth.refreshPremium();
-              await serverProvider.fetchServers();
-              final selectedServer = serverProvider.selectedServer;
-              if (selectedServer?.isPremium == true &&
-                  !auth.isPremium &&
-                  vpnProvider.isConnected) {
-                await vpnProvider.disconnect();
-              }
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Refreshed successfully'),
-                    duration: Duration(seconds: 2),
-                  ),
-                );
-              }
-            },
+            onPressed: isAndroid && (auth.isLoading || serverProvider.isLoading)
+                ? null
+                : () async {
+                    final vpnProvider = context.read<VpnProvider>();
+                    await auth.refreshPremium();
+                    await serverProvider.fetchServers();
+                    final selectedServer = serverProvider.selectedServer;
+                    if (selectedServer?.isPremium == true &&
+                        !auth.isPremium &&
+                        (!isAndroid || auth.isAccountVerified) &&
+                        vpnProvider.isConnected) {
+                      await vpnProvider.disconnect();
+                    }
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            isAndroid &&
+                                    (auth.error.isNotEmpty ||
+                                        serverProvider.error.isNotEmpty)
+                                ? 'Could not refresh account or servers. Please retry.'
+                                : 'Refreshed successfully',
+                          ),
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  },
             icon: const Icon(Icons.refresh),
             label: const Text('Refresh Status'),
           ),
@@ -171,7 +185,9 @@ class SettingsScreen extends StatelessWidget {
           // About section
           _sectionTitle('About'),
           const SizedBox(height: 8),
-          if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) ...[
+          if (!kIsWeb &&
+              (defaultTargetPlatform == TargetPlatform.android ||
+                  defaultTargetPlatform == TargetPlatform.iOS)) ...[
             const PrivacyPolicyButton(),
             const SizedBox(height: 8),
           ],
@@ -186,7 +202,9 @@ class SettingsScreen extends StatelessWidget {
             context,
             icon: Icons.code,
             title: 'VPN Engine',
-            value: 'Xray Core 25.3.6',
+            value: defaultTargetPlatform == TargetPlatform.iOS
+                ? 'Xray (flutter_vless)'
+                : 'Xray Core 25.3.6',
           ),
           const SizedBox(height: 24),
 

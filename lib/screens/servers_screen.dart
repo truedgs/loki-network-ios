@@ -199,7 +199,12 @@ class _ServersScreenState extends State<ServersScreen>
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
-              onPressed: () => provider.fetchServers(),
+              onPressed: () async {
+                if (Theme.of(context).platform == TargetPlatform.android) {
+                  await context.read<AuthProvider>().refreshPremium();
+                }
+                await provider.fetchServers();
+              },
               icon: const Icon(Icons.refresh),
               label: const Text('Retry'),
             ),
